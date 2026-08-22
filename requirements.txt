@@ -1,0 +1,15 @@
+streamlit>=1.37.1
+langchain>=0.2.16
+langchain-openai>=0.1.23
+langchain-community>=0.2.16
+langchain-core>=0.2.38
+python-dotenv>=1.0.1
+
+# NOTE: LangChain 1.x (released later) removed/relocated several APIs used
+# in this assignment (langchain.chains.LLMChain, langchain.prompts,
+# langchain.globals.set_llm_cache). The versions pinned above are the
+# 0.2.x line where these APIs work exactly as taught in the course. If you
+# want to use LangChain 1.x instead, the equivalent changes are:
+#   - LLMChain(llm=llm, prompt=tmpl)      -> tmpl | llm  (RunnableSequence)
+#   - from langchain.prompts import X     -> from langchain_core.prompts import X
+#   - from langchain.globals import set_llm_cache -> langchain_core.caches / init_chat_model caching
