@@ -1,148 +1,64 @@
 """
 src/prompts.py
----------------
-PromptTemplate (structured JSON assessment) + ChatPromptTemplate
-(System/Human narrative) + the safety system rules and JSON schema.
+--------------
+Defines PromptTemplates using langchain_core.prompts.
 """
+from langchain_core.prompts import PromptTemplate, ChatPromptTemplate
 
-try:
-    from langchain.prompts import PromptTemplate, ChatPromptTemplate
-except ImportError:
-    from langchain_core.prompts import PromptTemplate, ChatPromptTemplate
-from langchain_core.prompts import ChatPromptTemplate
-from langchain_core.messages import SystemMessage, HumanMessage
+ASSESSMENT_PROMPT_TEMPLATE = """
+You are MediGuide AI, an expert multi-specialty clinical decision support assistant.
+Analyse the following patient information step-by-step and produce a JSON response adhering EXACTLY to the specified schema.
 
-from src.config import MIN_DIFFERENTIALS
+Patient Details:
+- Age: {age}
+- Gender: {gender}
+- Primary Symptoms: {symptoms}
+- Symptom Duration: {duration}
+- Severity (1-10): {severity}
+- History of Presenting Complaint (HOP): {hop}
+- Pre-existing Conditions: {existing_conditions}
+- Current Active Medications: {medications}
+- Vitals / Clinical Notes: {notes}
+- Preferred Response Language: {answer_language}
 
-# -----------------------------------------------------------------------
-# Safety rules injected into every clinical-reasoning call.
-# -----------------------------------------------------------------------
-SAFETY_SYSTEM_RULES = """
-You are MediGuide AI, an EDUCATIONAL clinical-reasoning demo. You are not a
-doctor and this is not a real diagnosis. Follow these rules at all times:
+CRITICAL INSTRUCTIONS:
+1. Provide at least 5 plausible differential diagnoses in `possible_conditions`.
+2. For EACH condition, provide name, specialty, likelihood, pathophysiological reasoning, key features, suggested treatment, and rationale for treatment.
+3. If diagnostic confidence is Moderate or Low, include a list of tick-to-confirm clarifying questions in `clarifying_questions`.
+4. Return strictly VALID JSON without Markdown wrapper ticks (```json ... ```).
 
-1. Always make clear this is educational reasoning, never a confirmed,
-   real-world diagnosis.
-2. Never claim certainty. Reason the way a careful clinician would when
-   building a differential, weighing likelihood against the reported
-   history, symptoms, and vitals.
-3. Always produce AT LEAST {min_differentials} distinct, clinically
-   plausible differential diagnoses spanning more than one specialty when
-   the presentation allows it - never fewer than {min_differentials}.
-4. For every differential, give a concrete treatment/management suggestion
-   AND the clinical reasoning for why that treatment fits the presentation.
-5. If the picture is ambiguous (diagnostic_confidence is "Moderate" or
-   "Low"), still commit to your best-ranked working diagnosis, but also
-   list the specific follow-up questions a clinician would ask to confirm
-   or rule it out.
-6. Any red-flag / emergency feature (e.g. crushing chest pain, severe
-   shortness of breath, signs of stroke, uncontrolled bleeding, altered
-   consciousness) must push urgency_level to "HIGH" or "EMERGENCY" and be
-   listed in warning_signs.
-7. Output ONLY valid JSON matching the schema. No prose, no markdown code
-   fences, no commentary before or after the JSON.
-""".format(min_differentials=MIN_DIFFERENTIALS)
-
-JSON_SCHEMA_DESCRIPTION = """
-Return ONLY a single JSON object with EXACTLY this shape:
-
+JSON Schema Required:
 {{
-  "summary": "2-4 sentence plain-language case summary",
+  "summary": "Clinical summary of presentation",
+  "urgency_level": "LOW | MEDIUM | HIGH | EMERGENCY",
+  "diagnostic_confidence": "High | Moderate | Low",
   "possible_conditions": [
     {{
-      "name": "Condition name",
-      "specialty": "e.g. Cardiology / Internal Medicine / Neurology / Surgery / General Medicine",
-      "likelihood": "High / Moderate / Low",
-      "reason": "Why this fits the reported symptoms/history/vitals",
-      "key_features": "Distinguishing clinical features to look for",
-      "treatment": "Concrete first-line management/treatment suggestion",
-      "treatment_reason": "Why this treatment is appropriate for this condition/presentation"
+      "name": "Condition Name",
+      "specialty": "Cardiology | Surgery | Neurology | Internal Medicine",
+      "likelihood": "High | Moderate | Low",
+      "reason": "Pathophysiological justification",
+      "key_features": "Distinguishing signs/symptoms",
+      "treatment": "First-line management / treatment suggestion",
+      "treatment_reason": "Clinical rationale for treatment"
     }}
-    // AT LEAST {min_differentials} entries, ideally spanning multiple specialties
   ],
-  "diagnostic_confidence": "High / Moderate / Low",
-  "clarifying_questions": [
-    "Targeted question a clinician would ask to confirm or rule out the leading diagnosis"
-    // include 3-6 questions whenever diagnostic_confidence is Moderate or Low; may be empty if High
-  ],
-  "diagnostic_narrowing_questions": [
-    "Discriminating question to help isolate ONE primary diagnosis among the differentials"
-  ],
-  "urgency_level": "LOW / MEDIUM / HIGH / EMERGENCY",
-  "recommended_next_steps": [
-    "Concrete next action, e.g. specific test, monitoring step, or referral"
-  ],
-  "warning_signs": [
-    "Red-flag symptom that should prompt immediate emergency care"
-  ]
+  "clarifying_questions": ["Question 1", "Question 2"],
+  "diagnostic_narrowing_questions": ["Discriminating Question 1", "Discriminating Question 2"],
+  "recommended_next_steps": ["Step 1", "Step 2"],
+  "warning_signs": ["Red Flag 1", "Red Flag 2"]
 }}
-""".format(min_differentials=MIN_DIFFERENTIALS)
-
-# -----------------------------------------------------------------------
-# Main structured-assessment prompt (used with LLMChain)
-# -----------------------------------------------------------------------
-ASSESSMENT_TEMPLATE = """{safety_rules}
-
-PATIENT CASE
-------------
-Age: {age}
-Gender: {gender}
-Reported symptoms: {symptoms}
-Duration: {duration}
-Self-rated severity (1-10): {severity}
-History of presenting complaint: {hop}
-Pre-existing conditions: {existing_conditions}
-Current medications: {medications}
-Vitals / clinical notes: {notes}
-
-Respond in this language: {answer_language}
-
-{schema}
 """
 
 ASSESSMENT_PROMPT = PromptTemplate(
     input_variables=[
-        "age", "gender", "symptoms", "duration", "severity", "hop",
-        "existing_conditions", "medications", "notes", "answer_language",
+        "age", "gender", "symptoms", "duration", "severity",
+        "hop", "existing_conditions", "medications", "notes", "answer_language"
     ],
-    partial_variables={
-        "safety_rules": SAFETY_SYSTEM_RULES,
-        "schema": JSON_SCHEMA_DESCRIPTION,
-    },
-    template=ASSESSMENT_TEMPLATE,
+    template=ASSESSMENT_PROMPT_TEMPLATE,
 )
-
-# -----------------------------------------------------------------------
-# Narrative streaming prompt (System + Human messages, used with .stream())
-# -----------------------------------------------------------------------
-NARRATIVE_SYSTEM_TEXT = (
-    "You are MediGuide AI narrating a structured educational assessment "
-    "back to the patient in plain, warm, non-alarming language. Remind "
-    "them this is educational only and not a real diagnosis. Respond in "
-    "the requested language."
-)
-
-NARRATIVE_HUMAN_TEMPLATE = """Patient context:
-Age: {age}, Gender: {gender}, Symptoms: {symptoms}, Duration: {duration},
-Severity: {severity}/10, HOP: {hop}.
-
-Structured assessment JSON to narrate in plain language:
-{structured_summary}
-
-Respond in this language: {answer_language}
-"""
 
 NARRATIVE_PROMPT = ChatPromptTemplate.from_messages([
-    ("system", NARRATIVE_SYSTEM_TEXT),
-    ("human", NARRATIVE_HUMAN_TEMPLATE),
+    ("system", "You are an empathetic, clear medical communicator explaining a clinical assessment directly to a patient in language: {answer_language}."),
+    ("human", "Explain the following clinical assessment structured data in friendly, easy-to-understand terms:\n\n{structured_summary}")
 ])
-
-# -----------------------------------------------------------------------
-# Standalone SystemMessage / HumanMessage / AIMessage demo (learning only,
-# separate from the main chain - kept for the assignment's requirement).
-# -----------------------------------------------------------------------
-def build_message_demo(question: str):
-    return [
-        SystemMessage(content=NARRATIVE_SYSTEM_TEXT),
-        HumanMessage(content=question),
-    ]

@@ -1,28 +1,30 @@
 """
 src/cache_manager.py
----------------------
-Switches LangChain's global LLM cache between None / InMemoryCache /
-SQLiteCache based on the sidebar selection.
+--------------------
+Manages dynamic cache switching between In-Memory, SQLite, and Disabled states.
 """
-
 try:
-    from langchain.globals import set_llm_cache
-except ImportError:
     from langchain_core.globals import set_llm_cache
+except ImportError:
+    from langchain.globals import set_llm_cache
+
 from langchain_community.cache import InMemoryCache, SQLiteCache
 
 CACHE_EXPLANATIONS = {
-    "None": "Caching disabled - every submission calls the API.",
-    "In-Memory": "Cached in RAM for this session only (fastest, lost on restart).",
-    "SQLite": "Cached to mediguide_cache.db on disk (survives restarts).",
+    "None": "LLM responses are fetched live from OpenAI without caching.",
+    "In-Memory": "Responses are cached in RAM for the duration of the active session.",
+    "SQLite": "Responses are cached persistently in a local SQLite file (mediguide_cache.db).",
 }
 
 
-def configure_cache(mode: str) -> str:
-    if mode == "In-Memory":
+def configure_cache(cache_mode: str) -> str:
+    """Configures global LangChain LLM cache based on UI choice."""
+    if cache_mode == "In-Memory":
         set_llm_cache(InMemoryCache())
-    elif mode == "SQLite":
+        return "In-Memory cache active (RAM)."
+    elif cache_mode == "SQLite":
         set_llm_cache(SQLiteCache(database_path="mediguide_cache.db"))
+        return "SQLite persistent cache active (mediguide_cache.db)."
     else:
         set_llm_cache(None)
-    return CACHE_EXPLANATIONS.get(mode, "")
+        return "Caching disabled."

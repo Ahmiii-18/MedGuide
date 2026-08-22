@@ -1,11 +1,12 @@
 """
 app.py
 ------
-MediGuide AI - Modern Clinical UI & Assessment Engine.
+MedGuide AI - Modern Clinical UI & Assessment Engine.
 
 Features:
 - Real inline-SVG brand logo (header + sidebar)
-- High-contrast dark theme (fixed invisible-text bug)
+- High-contrast responsive dark/light adaptive theme
+- Focus highlighting on all input boxes (HOP, text inputs, selects)
 - Interactive Intake with History of Presenting Complaint (HOP)
 - Multi-specialty Differential Diagnosis (always >= 5 differentials),
   each with a treatment suggestion + clinical rationale
@@ -13,7 +14,7 @@ Features:
   in the leading diagnosis is Moderate/Low
 - Targeted Single-Diagnosis Narrowing Protocol
 - Real-Time Token Streaming Narrative Engine
-- MCQ-style progressive clinical-vignette practice mode
+- Fully responsive across mobile, tablet, laptop, and desktop viewports
 """
 
 import json
@@ -26,26 +27,22 @@ from src.config import (
     DISCLAIMER_SHORT, DISCLAIMER_LONG, URGENCY_COLOURS, OPENAI_API_KEY,
     MIN_DIFFERENTIALS, logo_html,
 )
-from src.cache_manager import configure_cache, CACHE_EXPLANATIONS
+from src.cache_manager import configure_cache
 from src.chains import build_llm, build_assessment_chain, run_assessment, stream_narrative
-from src.utils import safe_parse_assessment, empty_assessment_fallback, format_symptoms, urgency_to_streamlit_kind
-from src.case_bank import list_cases, get_case
+from src.utils import safe_parse_assessment, format_symptoms
 
 # -----------------------------------------------------------------------
 # PAGE CONFIGURATION
 # -----------------------------------------------------------------------
 st.set_page_config(
-    page_title="MediGuide AI | Clinical Decision Support System",
+    page_title="MedGuide AI | Clinical Decision Support System",
     page_icon="⚕️",
     layout="wide",
     initial_sidebar_state="expanded"
 )
 
 # -----------------------------------------------------------------------
-# STYLING - high-contrast dark theme
-# (Broad `.stApp *` colour fallback fixes text disappearing against the
-#  dark background; specific inline `style="color:...`" rules elsewhere
-#  still win because inline styles always beat these class rules.)
+# RESPONSIVE STYLING & HIGH-CONTRAST THEME
 # -----------------------------------------------------------------------
 CUSTOM_CSS = """
 <style>
@@ -54,28 +51,26 @@ CUSTOM_CSS = """
         --mg-bg-soft: #f2f0ea;
         --mg-text: #2b2f38;
         --mg-text-muted: #6b7280;
-        --mg-border: rgba(43, 47, 56, 0.12);
+        --mg-border: rgba(43, 47, 56, 0.18);
         --mg-accent: #0284c7;
         --mg-accent-2: #4f46e5;
     }
 
-    /* Main Background & Typography (off-white, not stark white) */
+    /* Main Background & Typography */
     .stApp {
         background-color: var(--mg-bg);
         color: var(--mg-text);
         font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
     }
 
-    /* Safety net: force readable colour on any un-styled text so nothing
-       disappears against the background. Elements with their own inline
-       colour (badges, headings, etc.) are unaffected because inline style wins. */
+    /* Universal text visibility safety net */
     .stApp, .stApp p, .stApp span, .stApp li, .stApp label,
     .stApp div, .stApp small, .stApp h1, .stApp h2, .stApp h3,
     .stApp h4, .stApp h5, .stApp h6 {
         color: var(--mg-text);
     }
 
-    /* Sidebar */
+    /* Sidebar Styling */
     section[data-testid="stSidebar"] {
         background: var(--mg-bg-soft);
         border-right: 1px solid var(--mg-border);
@@ -85,27 +80,42 @@ CUSTOM_CSS = """
         color: var(--mg-text-muted) !important;
     }
 
-    /* Widget labels (selectbox/slider/text input/textarea/radio/checkbox) */
+    /* Form Controls & Input Widgets Label Styling */
     div[data-testid="stWidgetLabel"] p, div[data-testid="stWidgetLabel"] label {
         color: var(--mg-text) !important;
-        font-weight: 500 !important;
+        font-weight: 600 !important;
     }
 
-    /* Text inputs / text areas */
+    /* Base Styling for Inputs & Textareas */
     div[data-baseweb="input"] input,
     div[data-baseweb="textarea"] textarea,
     textarea, input[type="text"] {
         color: var(--mg-text) !important;
         background-color: #ffffff !important;
-        border-color: var(--mg-border) !important;
+        border: 1px solid var(--mg-border) !important;
+        border-radius: 8px !important;
+        transition: border-color 0.15s ease-in-out, box-shadow 0.15s ease-in-out !important;
     }
     ::placeholder { color: #9aa1ad !important; opacity: 1 !important; }
 
-    /* Select / multiselect */
+    /* FOCUS STATES FOR ALL INPUT BOXES (HOP, Text Inputs, Selects) */
+    div[data-baseweb="input"]:focus-within,
+    div[data-baseweb="textarea"]:focus-within,
+    div[data-baseweb="select"]:focus-within,
+    textarea:focus, 
+    input[type="text"]:focus {
+        border-color: #0284c7 !important;
+        box-shadow: 0 0 0 3px rgba(2, 132, 199, 0.25) !important;
+        outline: none !important;
+    }
+
+    /* Select & Multiselect Customization */
     div[data-baseweb="select"] > div {
         background-color: #ffffff !important;
         border-color: var(--mg-border) !important;
         color: var(--mg-text) !important;
+        border-radius: 8px !important;
+        transition: border-color 0.15s ease-in-out, box-shadow 0.15s ease-in-out !important;
     }
     div[data-baseweb="select"] * { color: var(--mg-text) !important; }
     span[data-baseweb="tag"] {
@@ -118,24 +128,21 @@ CUSTOM_CSS = """
     }
     ul[role="listbox"] li { color: var(--mg-text) !important; }
 
-    /* Slider */
+    /* Sliders, Checkboxes, Radios */
     div[data-testid="stSlider"] label, div[data-testid="stSlider"] div {
         color: var(--mg-text) !important;
     }
 
-    /* Checkbox / radio labels */
     div[data-testid="stCheckbox"] label p,
     div[data-testid="stRadio"] label p,
     div[data-testid="stRadio"] div[role="radiogroup"] label {
         color: var(--mg-text) !important;
     }
 
-    /* Metric */
     [data-testid="stMetricValue"], [data-testid="stMetricLabel"] {
         color: var(--mg-text) !important;
     }
 
-    /* Expander */
     div[data-testid="stExpander"] {
         background-color: #ffffff !important;
         border: 1px solid var(--mg-border) !important;
@@ -148,32 +155,32 @@ CUSTOM_CSS = """
         color: var(--mg-text) !important;
     }
 
-    /* Caption */
     .stCaption, small { color: var(--mg-text-muted) !important; }
 
-    /* Top Dashboard Header Banner */
+    /* Top Dashboard Header Banner - Fluid & Responsive */
     .modern-header {
         position: relative;
         background: linear-gradient(135deg, #0f2942 0%, #14406b 100%);
-        border-radius: 20px;
-        padding: 2.2rem 2.5rem;
-        margin-bottom: 2rem;
+        border-radius: 18px;
+        padding: clamp(1.2rem, 3vw, 2.2rem) clamp(1.2rem, 3vw, 2.5rem);
+        margin-bottom: 1.5rem;
         box-shadow: 0 4px 16px rgba(15, 23, 42, 0.12);
         border: 1px solid rgba(255, 255, 255, 0.10);
         display: flex;
         align-items: center;
-        gap: 2rem;
+        gap: clamp(1rem, 2vw, 2rem);
+        flex-wrap: wrap;
         overflow: hidden;
     }
 
     .header-logo {
         position: relative;
         z-index: 1;
-        width: 78px;
-        height: 78px;
+        width: clamp(54px, 8vw, 78px);
+        height: clamp(54px, 8vw, 78px);
         background: rgba(255, 255, 255, 0.10);
         padding: 0.5rem;
-        border-radius: 22px;
+        border-radius: 18px;
         border: 1px solid rgba(255, 255, 255, 0.2);
         display: flex;
         align-items: center;
@@ -181,27 +188,26 @@ CUSTOM_CSS = """
         flex-shrink: 0;
     }
 
-    .header-content { position: relative; z-index: 1; }
+    .header-content { position: relative; z-index: 1; flex: 1 1 280px; }
 
-    .modern-header * {
-    color: #ffffff !important;
-}
+    .modern-header * { color: #ffffff !important; }
 
-.header-content h1 {
-    color: #ffffff !important;
-    font-size: 2.3rem !important;
-    margin: 0 !important;
-    font-weight: 800 !important;
-    letter-spacing: -0.03em !important;
-}
+    .header-content h1 {
+        color: #ffffff !important;
+        font-size: clamp(1.4rem, 4vw, 2.3rem) !important;
+        margin: 0 !important;
+        font-weight: 800 !important;
+        letter-spacing: -0.03em !important;
+    }
 
-.header-content p {
-    color: #f1f5f9 !important;
-    font-size: 1.02rem !important;
-    margin: 0.4rem 0 0 0 !important;
-    font-weight: 400 !important;
-    max-width: 680px;
-}
+    .header-content p {
+        color: #f1f5f9 !important;
+        font-size: clamp(0.88rem, 2vw, 1.02rem) !important;
+        margin: 0.4rem 0 0 0 !important;
+        font-weight: 400 !important;
+        max-width: 680px;
+    }
+
     .status-badge {
         display: inline-flex;
         align-items: center;
@@ -225,14 +231,15 @@ CUSTOM_CSS = """
         border-radius: 50%;
     }
 
-    /* Cards */
+    /* Responsive Cards */
     .glass-card {
         background: #ffffff;
         border: 1px solid var(--mg-border);
         border-radius: 14px;
-        padding: 1.3rem;
+        padding: clamp(0.9rem, 2vw, 1.3rem);
         margin-bottom: 1rem;
         box-shadow: 0 1px 3px rgba(15, 23, 42, 0.06);
+        word-break: break-word;
     }
     .glass-card, .glass-card * { color: var(--mg-text); }
 
@@ -241,11 +248,11 @@ CUSTOM_CSS = """
         background: #ffffff;
         border: 1px solid var(--mg-border);
         border-radius: 18px;
-        padding: 1.8rem;
+        padding: clamp(1rem, 3vw, 1.8rem);
         box-shadow: 0 1px 3px rgba(15, 23, 42, 0.06);
     }
 
-    /* Primary Interactive Buttons - flat, no glow/shine */
+    /* Primary Interactive Buttons */
     .stButton > button, div[data-testid="stFormSubmitButton"] > button {
         background: #0284c7 !important;
         color: #ffffff !important;
@@ -255,23 +262,15 @@ CUSTOM_CSS = """
         padding: 0.6rem 1.3rem !important;
         transition: background-color 0.15s ease !important;
         box-shadow: none !important;
+        width: 100% !important;
     }
     .stButton > button *, div[data-testid="stFormSubmitButton"] > button * { color: #ffffff !important; }
 
     .stButton > button:hover, div[data-testid="stFormSubmitButton"] > button:hover {
         background: #0369a1 !important;
-        transform: none !important;
-        box-shadow: none !important;
-    }
-    .stButton > button:active, div[data-testid="stFormSubmitButton"] > button:active {
-        background: #075985 !important;
-        box-shadow: none !important;
-    }
-    .stButton > button:focus, div[data-testid="stFormSubmitButton"] > button:focus {
-        box-shadow: 0 0 0 2px rgba(2, 132, 199, 0.35) !important;
     }
 
-    /* Specialty / status Badges */
+    /* Badges */
     .badge {
         display: inline-block;
         padding: 0.25rem 0.7rem;
@@ -280,6 +279,7 @@ CUSTOM_CSS = """
         border-radius: 9999px;
         text-transform: uppercase;
         letter-spacing: 0.04em;
+        margin: 2px 0;
     }
     .badge-cardiology { background: #fef2f2; color: #b91c1c !important; border: 1px solid #fca5a5; }
     .badge-surgery { background: #fffbeb; color: #92400e !important; border: 1px solid #fcd34d; }
@@ -295,16 +295,25 @@ CUSTOM_CSS = """
     .confidence-banner-moderate { border-left: 6px solid #f59e0b; }
     .confidence-banner-low { border-left: 6px solid #ef4444; }
 
-    /* Custom Navigation Tabs */
-    .stTabs [data-baseweb="tab-list"] { gap: 8px; background-color: transparent; }
+    /* Responsive Navigation Tabs */
+    .stTabs [data-baseweb="tab-list"] {
+        gap: 6px;
+        background-color: transparent;
+        flex-wrap: wrap !important;
+    }
     .stTabs [data-baseweb="tab"] {
-        height: 44px;
+        height: auto !important;
+        min-height: 40px;
+        padding: 0.4rem 0.8rem !important;
         background-color: #ffffff;
         border-radius: 10px;
         color: var(--mg-text-muted) !important;
-        font-size: 0.88rem;
+        font-size: 0.85rem;
         font-weight: 500;
         border: 1px solid var(--mg-border);
+        white-space: normal !important;
+        text-align: center;
+        flex: 1 1 auto;
     }
     .stTabs [data-baseweb="tab"] p { color: inherit !important; }
     .stTabs [aria-selected="true"] {
@@ -314,11 +323,26 @@ CUSTOM_CSS = """
     }
     .stTabs [aria-selected="true"] p { color: #0369a1 !important; }
 
-    /* Header Bar Cleanup */
     header[data-testid="stHeader"] { background: var(--mg-bg); }
-
-    /* Alerts stay readable regardless of theme */
     div[data-testid="stAlert"] p { color: inherit !important; }
+
+    /* Mobile-Specific Overrides */
+    @media (max-width: 640px) {
+        .modern-header {
+            padding: 1.2rem;
+            flex-direction: column;
+            text-align: center;
+        }
+        .header-logo {
+            margin: 0 auto;
+        }
+        .status-badge {
+            margin-top: 0.6rem;
+        }
+        div[data-testid="stForm"] {
+            padding: 0.9rem !important;
+        }
+    }
 </style>
 """
 st.markdown(CUSTOM_CSS, unsafe_allow_html=True)
@@ -330,7 +354,7 @@ with st.sidebar:
     st.markdown(f"""
         <div style="display:flex; align-items:center; gap:0.7rem; margin-bottom:0.2rem;">
             <div style="width:38px;height:38px;">{logo_html(38)}</div>
-            <div style="font-size:1.3rem; font-weight:800; color:#0369a1;">MediGuide AI</div>
+            <div style="font-size:1.3rem; font-weight:800; color:#0369a1;">MedGuide AI</div>
         </div>
     """, unsafe_allow_html=True)
     st.caption("Clinical Assessment Engine v3.0 - Educational Prototype")
@@ -366,7 +390,7 @@ st.markdown(f"""
     <div class="modern-header">
         <div class="header-logo">{logo_html(56)}</div>
         <div class="header-content">
-            <h1>MediGuide Clinical Engine</h1>
+            <h1>MedGuide AI Clinical Engine</h1>
             <p>Multi-specialty diagnostic reasoning across Cardiology, Surgery, Neurology, and Internal Medicine.</p>
             <div class="status-badge">
                 <div class="status-dot"></div>
@@ -376,98 +400,19 @@ st.markdown(f"""
     </div>
 """, unsafe_allow_html=True)
 
-# Prominent, always-visible educational disclaimer (main area, not just sidebar)
+# Main educational disclaimer banner
 st.warning(
-    "🎓 **Educational prototype only.** MediGuide AI is **not a real doctor** and does not "
+    "🎓 **Educational prototype only.** MedGuide AI is **not a real doctor** and does not "
     "provide a real diagnosis. If this may be a medical emergency, call your local "
     "emergency number or go to the nearest emergency room immediately."
 )
-
-# -----------------------------------------------------------------------
-# MCQ PRACTICE MODE - progressive clinical vignettes (independent of the
-# main assessment engine; uses a local case bank, no API call needed)
-# -----------------------------------------------------------------------
-with st.expander("🎓 Practice Cases - Progressive Clinical Vignettes (MCQ Mode)", expanded=False):
-    st.markdown(
-        "Work through a case the way it unfolds in real life: you start with **minimal "
-        "symptoms**, answer a multiple-choice question, then more findings are revealed "
-        "and the question sharpens - just like stepwise clinical-reasoning exam questions."
-    )
-
-    cases = list_cases()
-    case_labels = [f"{title} — {spec}" for _, title, spec in cases]
-    case_ids = [cid for cid, _, _ in cases]
-
-    chosen_label = st.selectbox("Choose a practice case", case_labels, key="practice_case_select")
-    chosen_id = case_ids[case_labels.index(chosen_label)]
-
-    if st.button("▶️ Start / Restart This Case", key="practice_start_btn"):
-        st.session_state["practice_case_id"] = chosen_id
-        st.session_state["practice_step"] = 0
-        st.session_state.pop("practice_feedback", None)
-
-    active_id = st.session_state.get("practice_case_id")
-    if active_id:
-        case = get_case(active_id)
-        step_idx = st.session_state.get("practice_step", 0)
-
-        if case and step_idx < len(case["steps"]):
-            st.markdown(f"#### {case['title']}")
-
-            # Accumulate all symptoms revealed so far (this step and earlier ones)
-            revealed_symptoms = []
-            for s in case["steps"][: step_idx + 1]:
-                revealed_symptoms.extend(s["add_symptoms"])
-
-            st.markdown('<div class="glass-card">', unsafe_allow_html=True)
-            st.markdown(f"**Step {step_idx + 1} of {len(case['steps'])} — Symptoms so far:**")
-            for sym in revealed_symptoms:
-                st.markdown(f"- {sym}")
-            st.markdown("---")
-
-            step = case["steps"][step_idx]
-            answer_key = f"practice_answer_{case['id']}_{step_idx}"
-            choice = st.radio(step["question"], step["options"], key=answer_key, index=None)
-
-            col_a, col_b = st.columns([1, 1])
-            with col_a:
-                check_clicked = st.button("Check Answer", key=f"check_{case['id']}_{step_idx}")
-            with col_b:
-                next_disabled = f"feedback_{case['id']}_{step_idx}" not in st.session_state
-                next_clicked = st.button(
-                    "Next ➜ Reveal More Findings" if step_idx < len(case["steps"]) - 1 else "Finish Case",
-                    key=f"next_{case['id']}_{step_idx}",
-                    disabled=next_disabled,
-                )
-
-            if check_clicked:
-                if choice is None:
-                    st.warning("Pick an option first.")
-                else:
-                    correct = step["options"][step["correct_index"]]
-                    is_correct = choice == correct
-                    st.session_state[f"feedback_{case['id']}_{step_idx}"] = True
-                    if is_correct:
-                        st.success(f"✅ Correct. {step['explanation']}")
-                    else:
-                        st.error(f"❌ Not quite. The best answer was: **{correct}**\n\n{step['explanation']}")
-
-            if next_clicked:
-                st.session_state["practice_step"] = step_idx + 1
-                st.rerun()
-
-            st.markdown('</div>', unsafe_allow_html=True)
-        elif case:
-            st.success("🎉 Case complete! Choose another case above to keep practicing.")
-    else:
-        st.caption("Select a case and click **Start** to begin.")
 
 # -----------------------------------------------------------------------
 # PATIENT INTAKE FORM
 # -----------------------------------------------------------------------
 with st.form("clinical_intake_form"):
     st.markdown("#### 👤 Patient Demographics & Baseline")
-    c1, c2, c3 = st.columns(3)
+    c1, c2, c3 = st.columns([1, 1, 1])
     with c1:
         age = st.text_input("Age", placeholder="e.g. 58")
     with c2:
@@ -497,7 +442,7 @@ with st.form("clinical_intake_form"):
     )
 
     st.markdown("#### 📋 Medical History & Profile")
-    col_m1, col_m2 = st.columns(2)
+    col_m1, col_m2 = st.columns([1, 1])
     with col_m1:
         existing_conditions = st.text_area("Pre-existing Conditions", placeholder="e.g. HTN, T2DM, Asthma", height=70)
     with col_m2:
@@ -571,18 +516,16 @@ if "assessment" in st.session_state:
             <div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 0.6rem;">
                 <div>
                     <span style="font-size: 0.85rem; color: #6b7280; text-transform: uppercase; letter-spacing: 0.05em;">Evaluation Status</span>
-                    <h2 style="margin: 0; color: #1e293b;">{urgency_color} {urgency} URGENCY</h2>
+                    <h2 style="margin: 0; color: #1e293b; font-size: clamp(1.2rem, 3vw, 1.8rem);">{urgency_color} {urgency} URGENCY</h2>
                 </div>
                 <div>
-                    <span class="badge badge-cardiology" style="font-size: 0.9rem; padding: 0.45rem 0.9rem;">Reported Severity: {chain_inputs['severity']}/10</span>
-                    <span class="badge badge-general" style="font-size: 0.9rem; padding: 0.45rem 0.9rem;">Diagnostic Confidence: {confidence}</span>
+                    <span class="badge badge-cardiology" style="font-size: 0.85rem; padding: 0.4rem 0.8rem;">Reported Severity: {chain_inputs['severity']}/10</span>
+                    <span class="badge badge-general" style="font-size: 0.85rem; padding: 0.4rem 0.8rem;">Diagnostic Confidence: {confidence}</span>
                 </div>
             </div>
         </div>
     """, unsafe_allow_html=True)
 
-    # NOTE: order per current requirements -> Differentials, Narrowing,
-    # Live Stream, then Clinical Summary (4th), then Next Steps, then Red Flags.
     tab_differential, tab_narrowing, tab_stream, tab_summary, tab_next, tab_warnings = st.tabs([
         "🩺 Multi-Domain Differentials",
         "🎯 Narrowing Protocol",
@@ -592,7 +535,7 @@ if "assessment" in st.session_state:
         "⚠️ Red Flags",
     ])
 
-    # Tab 1: Differentials (>= MIN_DIFFERENTIALS, each with treatment + reason)
+    # Tab 1: Differentials
     with tab_differential:
         st.markdown(f"#### Multi-Specialty Differential Diagnoses (minimum {MIN_DIFFERENTIALS} shown)")
         conditions = assessment.get("possible_conditions", [])
@@ -621,7 +564,7 @@ if "assessment" in st.session_state:
                 </div>
             """, unsafe_allow_html=True)
 
-        # Tick-to-confirm clarifying questions whenever the AI isn't confident
+        # Clarifying questions checklist
         if confidence.strip().lower() in ("moderate", "low"):
             clarifying_qs = assessment.get("clarifying_questions", [])
             if clarifying_qs:
@@ -711,7 +654,7 @@ if "assessment" in st.session_state:
             st.write_stream(stream_narrative(streaming_llm, stream_inputs))
         st.markdown('</div>', unsafe_allow_html=True)
 
-    # Tab 4: Clinical Summary (moved here, after the live stream)
+    # Tab 4: Clinical Summary
     with tab_summary:
         st.markdown('<div class="glass-card">', unsafe_allow_html=True)
         st.markdown("#### 📜 Case Presentation Summary")

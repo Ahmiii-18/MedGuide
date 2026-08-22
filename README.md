@@ -1,9 +1,9 @@
-# MediGuide AI
+# MedGuide AI
 
 An educational Streamlit + LangChain prototype that turns a patient's
 self-reported symptoms into structured, safety-first guidance.
 
-> ⚠️ **This is an educational prototype only.** MediGuide AI is **not a real
+> ⚠️ **This is an educational prototype only.** MedGuide AI is **not a real
 > doctor**, not a licensed clinician, not a diagnostic tool, and not a
 > substitute for professional medical advice. Every diagnosis, urgency
 > rating, and treatment suggestion is a machine-generated educational
@@ -131,7 +131,7 @@ requests are served from the cache instead of calling the API again.
 
 | | InMemoryCache | SQLiteCache |
 |---|---|---|
-| Storage | RAM | A file on disk (`mediguide_cache.db`) |
+| Storage | RAM | A file on disk (`medguide_cache.db`) |
 | Speed | Fastest | Fast, slightly slower |
 | Survives restart? | No | Yes |
 | Best for | One session / quick testing | Reusing results across sessions |
