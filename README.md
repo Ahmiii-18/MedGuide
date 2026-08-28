@@ -175,3 +175,5 @@ treatment. Always consult a qualified healthcare professional.
 Some new line of text
 
 Some new line of text
+
+Some new line of text
